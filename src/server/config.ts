@@ -1,10 +1,10 @@
 import "server-only";
 import { z } from "zod";
 
-const envSchema = z.object({
+export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3000),
-  DATABASE_URL: z.string().url(),
+  DATABASE_URL: z.string().url("DATABASE_URL must be a valid connection URL"),
   OTP_HMAC_SECRET: z.string().min(32, "OTP_HMAC_SECRET must be at least 32 characters long"),
   SESSION_SECRET: z.string().min(32, "SESSION_SECRET must be at least 32 characters long"),
   SESSION_IDLE_EXPIRY_SECONDS: z.coerce.number().positive().default(7 * 24 * 60 * 60), // 7 days
@@ -17,8 +17,8 @@ const envSchema = z.object({
 
 export type Config = z.infer<typeof envSchema>;
 
-function loadConfig(): Config {
-  const result = envSchema.safeParse(process.env);
+export function parseConfig(env: NodeJS.ProcessEnv = process.env): Config {
+  const result = envSchema.safeParse(env);
   if (!result.success) {
     const errorDetails = result.error.issues
       .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
@@ -30,4 +30,4 @@ function loadConfig(): Config {
   return result.data;
 }
 
-export const config = loadConfig();
+export const config = parseConfig();

@@ -5,13 +5,14 @@ services:
     environment:
       POSTGRES_USER: ind64
       POSTGRES_PASSWORD: ind64_secret_test_password
-      POSTGRES_DB: ind64_test
+      POSTGRES_DB: ind64_dev
     ports:
       - "5433:5432"
     volumes:
       - ind64_pg_data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ind64 -d ind64_test"]
+      test: ["CMD-SHELL", "pg_isready -U ind64 -d ind64_dev"]
       interval: 2s
       timeout: 3s
       retries: 15

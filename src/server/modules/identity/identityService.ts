@@ -6,7 +6,7 @@ import { config } from "../../config";
 import { AppError } from "../../api/envelope";
 import { normalizePhone } from "./phone";
 import { generateOtpCode, computeOtpHmac, verifyOtpHmac } from "./crypto";
-import { smsAdapter } from "../../providers/sms/fake";
+import { getSmsAdapter } from "../../providers/sms";
 import { rateLimiter } from "./rateLimit";
 import { randomUUID } from "node:crypto";
 
@@ -58,7 +58,8 @@ export class IdentityService {
     const resendAvailableAt = new Date(now.getTime() + config.OTP_RESEND_COOLDOWN_SECONDS * 1000);
 
     // Queue provider delivery
-    const sent = await smsAdapter.sendOtp(normalizedPhone, code);
+    const sms = getSmsAdapter();
+    const sent = await sms.sendOtp(normalizedPhone, code);
     if (!sent) {
       throw new AppError(
         503,
@@ -128,7 +129,8 @@ export class IdentityService {
     const expiresAt = new Date(now.getTime() + config.OTP_EXPIRY_SECONDS * 1000);
     const resendAvailableAt = new Date(now.getTime() + config.OTP_RESEND_COOLDOWN_SECONDS * 1000);
 
-    const sent = await smsAdapter.sendOtp(existing.phone, newCode);
+    const sms = getSmsAdapter();
+    const sent = await sms.sendOtp(existing.phone, newCode);
     if (!sent) {
       throw new AppError(
         503,

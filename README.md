@@ -16,9 +16,11 @@ Backend foundation for the IND64 artist booking marketplace built on Next.js 15 
    cp .env.example .env
    ```
 
-2. Review and adjust secrets and database URL in `.env`:
+2. Review and adjust secrets and database URL in `.env`. Note the distinction between the development database (`ind64_dev`) and test database (`ind64_test`):
    ```ini
-   DATABASE_URL=postgresql://ind64:ind64_secret_test_password@localhost:5433/ind64_test
+   # Development Database
+   DATABASE_URL=postgresql://ind64:ind64_secret_test_password@localhost:5433/ind64_dev
+
    NODE_ENV=development
    PORT=3000
    OTP_HMAC_SECRET=ind64_super_secret_otp_hmac_key_at_least_32_chars
@@ -35,12 +37,12 @@ Backend foundation for the IND64 artist booking marketplace built on Next.js 15 
 
 ## 2. Start PostgreSQL & Run Migrations
 
-Start the dedicated PostgreSQL 16 container (port 5433):
+Start the dedicated PostgreSQL 16 container on port 5433 (creates both `ind64_dev` and `ind64_test` via initialization script):
 ```bash
 npm run db:up
 ```
 
-Run Drizzle database migrations:
+Run Drizzle database migrations against the development database:
 ```bash
 npm run db:migrate
 ```
@@ -54,7 +56,7 @@ npm run db:down
 
 ## 3. Running Tests
 
-Run the full Vitest suite (19 tests):
+Run the full Vitest suite (all unit and integration tests):
 ```bash
 npm test
 ```
@@ -149,6 +151,30 @@ curl -X POST http://localhost:3000/api/v1/auth/otp/challenges/<CHALLENGE_ID>/ver
 ```bash
 curl -X GET http://localhost:3000/api/v1/auth/session \
   -b cookies.txt
+```
+*Sample Response:*
+```json
+{
+  "data": {
+    "user": {
+      "id": "u123...",
+      "phone": "+919876543210",
+      "name": null,
+      "status": "active",
+      "memberships": [
+        {
+          "role": "customer",
+          "approvalState": "approved"
+        }
+      ]
+    },
+    "csrfToken": "csrf_token_hex_string",
+    "onboardingState": {
+      "hasCompletedProfile": false
+    }
+  },
+  "requestId": "req_..."
+}
 ```
 
 ### Step 5: Update Allowlisted Profile Fields (requires CSRF Token)

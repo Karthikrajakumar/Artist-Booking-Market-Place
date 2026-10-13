@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE ind64_dev;
+    CREATE DATABASE ind64_test;
+    GRANT ALL PRIVILEGES ON DATABASE ind64_dev TO ind64;
+    GRANT ALL PRIVILEGES ON DATABASE ind64_test TO ind64;
+EOSQL
