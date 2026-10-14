@@ -7,20 +7,24 @@ export const artistSearchQuerySchema = z
     category: z.string().trim().optional(),
     city: z.string().trim().optional(),
     minPriceMinor: z.coerce.number().int().nonnegative().optional(),
-    maxPriceMinor: z.coerce.number().int().positive().optional(),
+    maxPriceMinor: z.coerce.number().int().nonnegative().optional(),
     sort: z.enum(["price_asc", "price_desc", "newest"]).default("newest"),
     cursor: z.string().trim().optional(),
-    limit: z.coerce.number().int().min(1).max(100).default(20),
+    // Hard cap page size at 50 to prevent abuse
+    limit: z.coerce.number().int().min(1).max(50).default(20),
   })
-  .strict();
+  .strict()
+  .refine(
+    (data) => {
+      if (data.minPriceMinor !== undefined && data.maxPriceMinor !== undefined) {
+        return data.minPriceMinor <= data.maxPriceMinor;
+      }
+      return true;
+    },
+    {
+      message: "minPriceMinor must not exceed maxPriceMinor",
+      path: ["minPriceMinor"],
+    }
+  );
 
-export interface ArtistSearchQuery {
-  q?: string;
-  category?: string;
-  city?: string;
-  minPriceMinor?: number;
-  maxPriceMinor?: number;
-  sort?: "price_asc" | "price_desc" | "newest";
-  cursor?: string;
-  limit?: number;
-}
+export type ArtistSearchQuery = z.infer<typeof artistSearchQuerySchema>;

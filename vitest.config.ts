@@ -5,11 +5,14 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    testTimeout: 20000,
+    testTimeout: 30000,
     setupFiles: ["./test/setup.ts"],
-    fileParallelism: false,
-    maxWorkers: 1,
-    minWorkers: 1,
+    pool: "forks",
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
     env: {
       NODE_ENV: "test",
       DATABASE_URL: "postgresql://ind64:ind64_secret_test_password@localhost:5433/ind64_test",

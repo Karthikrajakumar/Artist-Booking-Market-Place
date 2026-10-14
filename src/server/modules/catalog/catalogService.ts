@@ -8,7 +8,7 @@ import {
   artistPackages,
   mediaAssets,
 } from "../../db/schema";
-import { eq, and, sql, desc, asc, gte, lte, or, ilike, inArray } from "drizzle-orm";
+import { eq, and, sql, desc, gte, lte, or, ilike, inArray } from "drizzle-orm";
 import { ArtistSearchQuery } from "./schemas";
 import { AppError } from "../../api/envelope";
 
@@ -41,6 +41,17 @@ export class CatalogService {
       .where(eq(locations.isActive, true));
   }
 
+  /**
+   * Escape LIKE/ILIKE metacharacters (%, _, and backslash) in user-supplied input.
+   * pg ILIKE uses backslash as the default escape character.
+   */
+  private escapeLikePattern(raw: string): string {
+    return raw
+      .replace(/\\/g, "\\\\")
+      .replace(/%/g, "\\%")
+      .replace(/_/g, "\\_");
+  }
+
   async searchArtists(query: ArtistSearchQuery): Promise<PaginatedResult<any>> {
     const conditions = [eq(artistProfiles.publicationState, "published")];
 
@@ -57,12 +68,13 @@ export class CatalogService {
       conditions.push(lte(artistProfiles.startingPriceMinor, query.maxPriceMinor));
     }
 
-    // Text search on stageName and tagline
+    // Text search on stageName and tagline — escape LIKE metacharacters first
     if (query.q) {
+      const pattern = `%${this.escapeLikePattern(query.q)}%`;
       conditions.push(
         or(
-          ilike(artistProfiles.stageName, `%${query.q}%`),
-          ilike(artistProfiles.tagline, `%${query.q}%`)
+          ilike(artistProfiles.stageName, pattern),
+          ilike(artistProfiles.tagline, pattern)
         )!
       );
     }
@@ -81,30 +93,33 @@ export class CatalogService {
       conditions.push(inArray(artistProfiles.id, artistIds));
     }
 
-    // Decode cursor if provided: base64(createdAt:id)
+    // Decode cursor if provided: base64(createdAt:id). Invalid cursors → 422.
     if (query.cursor) {
+      let decoded: string;
       try {
-        const decoded = Buffer.from(query.cursor, "base64").toString("utf-8");
-        const lastColon = decoded.lastIndexOf(":");
-        if (lastColon !== -1) {
-          const cursorDateStr = decoded.substring(0, lastColon);
-          const cursorId = decoded.substring(lastColon + 1);
-          const cursorDate = new Date(cursorDateStr);
-          if (!isNaN(cursorDate.getTime()) && cursorId) {
-            conditions.push(
-              or(
-                sql`${artistProfiles.createdAt} < ${cursorDate}`,
-                and(
-                  sql`${artistProfiles.createdAt} = ${cursorDate}`,
-                  sql`${artistProfiles.id} < ${cursorId}::uuid`
-                )
-              )!
-            );
-          }
-        }
+        decoded = Buffer.from(query.cursor, "base64").toString("utf-8");
       } catch {
-        // Ignore invalid cursor
+        throw new AppError(422, "UNPROCESSABLE_ENTITY", "Invalid pagination cursor.");
       }
+      const lastColon = decoded.lastIndexOf(":");
+      if (lastColon === -1) {
+        throw new AppError(422, "UNPROCESSABLE_ENTITY", "Invalid pagination cursor.");
+      }
+      const cursorDateStr = decoded.substring(0, lastColon);
+      const cursorId = decoded.substring(lastColon + 1);
+      const cursorDate = new Date(cursorDateStr);
+      if (isNaN(cursorDate.getTime()) || !cursorId) {
+        throw new AppError(422, "UNPROCESSABLE_ENTITY", "Invalid pagination cursor.");
+      }
+      conditions.push(
+        or(
+          sql`${artistProfiles.createdAt} < ${cursorDate}`,
+          and(
+            sql`${artistProfiles.createdAt} = ${cursorDate}`,
+            sql`${artistProfiles.id} < ${cursorId}::uuid`
+          )
+        )!
+      );
     }
 
     const limit = query.limit ?? 20;
@@ -140,8 +155,23 @@ export class CatalogService {
   }
 
   async getPublishedArtistBySlug(slug: string) {
+    // Project only public fields — userId and storageKey are internal and must never be returned.
     const [profile] = await db
-      .select()
+      .select({
+        id: artistProfiles.id,
+        slug: artistProfiles.slug,
+        stageName: artistProfiles.stageName,
+        tagline: artistProfiles.tagline,
+        bio: artistProfiles.bio,
+        cityId: artistProfiles.cityId,
+        startingPriceMinor: artistProfiles.startingPriceMinor,
+        currency: artistProfiles.currency,
+        experienceYears: artistProfiles.experienceYears,
+        coverImageUrl: artistProfiles.coverImageUrl,
+        publicationState: artistProfiles.publicationState,
+        createdAt: artistProfiles.createdAt,
+        // userId intentionally excluded
+      })
       .from(artistProfiles)
       .where(and(eq(artistProfiles.slug, slug), eq(artistProfiles.publicationState, "published")))
       .limit(1);
@@ -150,9 +180,17 @@ export class CatalogService {
       throw new AppError(404, "NOT_FOUND", "Artist not found.");
     }
 
-    // Fetch active packages
+    // Fetch active packages — internal artistId excluded from response
     const packages = await db
-      .select()
+      .select({
+        id: artistPackages.id,
+        title: artistPackages.title,
+        description: artistPackages.description,
+        durationMinutes: artistPackages.durationMinutes,
+        capacity: artistPackages.capacity,
+        feeMinor: artistPackages.feeMinor,
+        currency: artistPackages.currency,
+      })
       .from(artistPackages)
       .where(and(eq(artistPackages.artistId, profile.id), eq(artistPackages.isActive, true)));
 
@@ -166,7 +204,8 @@ export class CatalogService {
       .innerJoin(categories, eq(artistCategories.categoryId, categories.id))
       .where(eq(artistCategories.artistId, profile.id));
 
-    // Fetch approved public media
+    // Fetch ONLY approved public media: scanState = 'clean' AND visibility = 'public'.
+    // storageKey intentionally excluded — internal S3 path, never exposed to clients.
     const media = await db
       .select({
         id: mediaAssets.id,
@@ -174,9 +213,10 @@ export class CatalogService {
         mediaType: mediaAssets.mediaType,
       })
       .from(mediaAssets)
+      .innerJoin(artistProfiles as any, eq(mediaAssets.ownerId, (artistProfiles as any).userId))
       .where(
         and(
-          eq(mediaAssets.ownerId, profile.userId),
+          eq((artistProfiles as any).id, profile.id),
           eq(mediaAssets.scanState, "clean"),
           eq(mediaAssets.visibility, "public")
         )

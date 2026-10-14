@@ -27,27 +27,28 @@ export class ShortlistService {
       throw new AppError(404, "NOT_FOUND", "Artist not found.");
     }
 
-    // Idempotent insert: on conflict do nothing
+    // Atomic idempotent insert — unique index on (customer_id, artist_id) prevents duplicate rows.
+    // ON CONFLICT DO NOTHING means concurrent calls are safe with no race window (F-17 fix).
+    const inserted = await db
+      .insert(shortlistItems)
+      .values({ customerId, artistId })
+      .onConflictDoNothing()
+      .returning();
+
+    // If inserted, return new id; else fetch the existing row id
+    if (inserted.length > 0) {
+      return { isShortlisted: true, id: inserted[0].id };
+    }
+
     const [existing] = await db
-      .select()
+      .select({ id: shortlistItems.id })
       .from(shortlistItems)
       .where(and(eq(shortlistItems.customerId, customerId), eq(shortlistItems.artistId, artistId)))
       .limit(1);
 
-    if (existing) {
-      return { isShortlisted: true, id: existing.id };
-    }
-
-    const [item] = await db
-      .insert(shortlistItems)
-      .values({
-        customerId,
-        artistId,
-      })
-      .returning();
-
-    return { isShortlisted: true, id: item.id };
+    return { isShortlisted: true, id: existing!.id };
   }
+
 
   async removeArtist(customerId: string, artistId: string) {
     await db

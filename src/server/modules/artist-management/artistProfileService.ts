@@ -8,10 +8,16 @@ import {
   mediaAssets,
   categories,
 } from "../../db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, count } from "drizzle-orm";
 import { AppError } from "../../api/envelope";
 import { getStorageAdapter } from "../../providers/storage";
 import { randomUUID } from "node:crypto";
+
+// Maximum media assets per artist (Step 8)
+const MAX_MEDIA_ASSETS_PER_ARTIST = 20;
+
+// Allowed content types (redundant safety check in service layer)
+const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export class ArtistManagementService {
   /**
@@ -125,9 +131,18 @@ export class ArtistManagementService {
   ) {
     const current = await this.getOrCreateDraftProfile(userId);
 
-    const updateFields: Record<string, unknown> = {
-      updatedAt: new Date(),
-    };
+    // Explicit typed update object — no `any` (F-18 fix)
+    const updateFields: Partial<{
+      stageName: string;
+      slug: string;
+      tagline: string;
+      bio: string;
+      cityId: string;
+      startingPriceMinor: number;
+      experienceYears: number;
+      coverImageUrl: string;
+      updatedAt: Date;
+    }> = { updatedAt: new Date() };
 
     if (data.stageName !== undefined) {
       updateFields.stageName = data.stageName;
@@ -140,11 +155,10 @@ export class ArtistManagementService {
     if (data.experienceYears !== undefined) updateFields.experienceYears = data.experienceYears;
     if (data.coverImageUrl !== undefined) updateFields.coverImageUrl = data.coverImageUrl;
 
-    const [updated] = await db
+    await db
       .update(artistProfiles)
       .set(updateFields)
-      .where(eq(artistProfiles.id, current.id))
-      .returning();
+      .where(eq(artistProfiles.id, current.id));
 
     // Update categories if supplied
     if (data.categoryIds !== undefined) {
@@ -165,8 +179,14 @@ export class ArtistManagementService {
   async submitProfileForReview(userId: string) {
     const profile = await this.getOrCreateDraftProfile(userId);
 
-    if (profile.publicationState === "published") {
-      throw new AppError(400, "BAD_REQUEST", "Profile is already published.");
+    // Step 4: Only draft → pending_review is allowed from this route.
+    // Transitions to published/rejected/suspended require administrator role.
+    if (profile.publicationState !== "draft") {
+      throw new AppError(
+        400,
+        "BAD_REQUEST",
+        `Profile cannot be submitted from state '${profile.publicationState}'. Only draft profiles may be submitted for review.`
+      );
     }
 
     const [updated] = await db
@@ -293,12 +313,46 @@ export class ArtistManagementService {
     userId: string,
     data: { fileName: string; contentType: string; sizeBytes: number }
   ) {
+    // Service-layer content type guard (defense in depth — schema already enforces this)
+    if (!ALLOWED_CONTENT_TYPES.has(data.contentType)) {
+      throw new AppError(
+        422,
+        "UNPROCESSABLE_ENTITY",
+        `Content type '${data.contentType}' is not allowed. Allowed: image/jpeg, image/png, image/webp.`
+      );
+    }
+
+    // Enforce per-artist media asset limit (Step 8: F-10)
+    const [{ total }] = await db
+      .select({ total: count() })
+      .from(mediaAssets)
+      .where(eq(mediaAssets.ownerId, userId));
+
+    if (total >= MAX_MEDIA_ASSETS_PER_ARTIST) {
+      throw new AppError(
+        422,
+        "UNPROCESSABLE_ENTITY",
+        `Maximum of ${MAX_MEDIA_ASSETS_PER_ARTIST} media assets allowed per artist.`
+      );
+    }
+
     const storage = getStorageAdapter();
-    const ext = data.fileName.split(".").pop() || "jpg";
-    const storageKey = `uploads/${userId}/${randomUUID()}.${ext}`;
+
+    // Step 8/F-09: storage key is 100% server-generated from userId + UUID.
+    // The client filename is NEVER used in the key — only the extension is derived
+    // from contentType to ensure correctness regardless of what the client sends.
+    const extMap: Record<string, string> = {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+    };
+    const ext = extMap[data.contentType] ?? "jpg";
+    const storageKey = `media/${userId}/${randomUUID()}.${ext}`;
 
     const intent = await storage.createUploadIntent(storageKey, data.contentType, data.sizeBytes);
 
+    // Step 8/F-07: New media assets start with scanState 'pending' — never 'clean'.
+    // 'clean' is only set by completeMediaUpload after verifyObject() confirms the upload.
     const [asset] = await db
       .insert(mediaAssets)
       .values({
@@ -306,8 +360,8 @@ export class ArtistManagementService {
         storageKey,
         url: storage.getPublicUrl(storageKey),
         mediaType: "image",
-        scanState: "pending",
-        visibility: "public",
+        scanState: "pending",  // NOT 'clean' — must be confirmed via /complete
+        visibility: "private", // Not public until moderation passes (pending decision)
       })
       .returning();
 
@@ -320,6 +374,7 @@ export class ArtistManagementService {
   }
 
   async completeMediaUpload(userId: string, assetId: string) {
+    // Ownership check: only the asset's owner can complete the upload
     const [asset] = await db
       .select()
       .from(mediaAssets)
@@ -330,12 +385,16 @@ export class ArtistManagementService {
       throw new AppError(404, "NOT_FOUND", "Media upload intent not found.");
     }
 
+    // Step 8: verifyObject() must confirm the object exists in storage before marking it usable
     const storage = getStorageAdapter();
     const verified = await storage.verifyObject(asset.storageKey);
     if (!verified) {
       throw new AppError(400, "BAD_REQUEST", "Uploaded object was not found in storage.");
     }
 
+    // After verification, set scanState to 'clean'.
+    // NOTE: In production, this would queue the asset for async moderation (pending decision).
+    // Visibility stays 'private' until moderation pipeline approves it.
     const [updated] = await db
       .update(mediaAssets)
       .set({
