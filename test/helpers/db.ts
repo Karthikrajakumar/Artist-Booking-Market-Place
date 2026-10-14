@@ -15,15 +15,21 @@ export function setupTestDatabase() {
     implementation: () => randomUUID(),
   });
 
-  // Create enum types
+  // Create enum types (Phase 1 + Phase 2)
   mem.public.none(`
     CREATE TYPE "membership_approval_state" AS ENUM('pending', 'approved', 'rejected');
     CREATE TYPE "membership_role" AS ENUM('customer', 'artist', 'administrator');
     CREATE TYPE "otp_purpose" AS ENUM('login', 'phone_change');
     CREATE TYPE "user_status" AS ENUM('active', 'suspended', 'deactivated');
+
+    CREATE TYPE "artist_publication_state" AS ENUM('draft', 'pending_review', 'published', 'archived');
+    CREATE TYPE "media_type" AS ENUM('image', 'video', 'audio', 'document');
+    CREATE TYPE "media_scan_state" AS ENUM('pending', 'clean', 'flagged');
+    CREATE TYPE "media_visibility" AS ENUM('public', 'private');
+    CREATE TYPE "application_status" AS ENUM('pending', 'under_review', 'approved', 'rejected');
   `);
 
-  // Create tables
+  // Create tables (Phase 1 + Phase 2)
   mem.public.none(`
     CREATE TABLE "users" (
       "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -69,6 +75,104 @@ export function setupTestDatabase() {
       "created_at" timestamp with time zone DEFAULT now() NOT NULL,
       "updated_at" timestamp with time zone DEFAULT now() NOT NULL
     );
+
+    CREATE TABLE "locations" (
+      "id" varchar(50) PRIMARY KEY NOT NULL,
+      "name" varchar(100) NOT NULL,
+      "state" varchar(100) NOT NULL,
+      "country" varchar(10) DEFAULT 'IN' NOT NULL,
+      "is_active" boolean DEFAULT true NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+
+    CREATE TABLE "categories" (
+      "id" varchar(50) PRIMARY KEY NOT NULL,
+      "name" varchar(100) NOT NULL,
+      "description" text,
+      "is_active" boolean DEFAULT true NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+
+    CREATE TABLE "artist_profiles" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+      "slug" varchar(100) NOT NULL UNIQUE,
+      "stage_name" varchar(150) NOT NULL,
+      "tagline" varchar(255),
+      "bio" text,
+      "city_id" varchar(50) REFERENCES "locations"("id"),
+      "publication_state" "artist_publication_state" DEFAULT 'draft' NOT NULL,
+      "starting_price_minor" integer DEFAULT 0 NOT NULL,
+      "currency" varchar(10) DEFAULT 'INR' NOT NULL,
+      "experience_years" integer,
+      "cover_image_url" text,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+
+    CREATE UNIQUE INDEX "artist_profiles_user_id_idx" ON "artist_profiles" ("user_id");
+    CREATE UNIQUE INDEX "artist_profiles_slug_idx" ON "artist_profiles" ("slug");
+    CREATE INDEX "artist_profiles_pub_city_idx" ON "artist_profiles" ("publication_state", "city_id");
+
+    CREATE TABLE "artist_categories" (
+      "artist_id" uuid NOT NULL REFERENCES "artist_profiles"("id") ON DELETE cascade,
+      "category_id" varchar(50) NOT NULL REFERENCES "categories"("id") ON DELETE cascade,
+      PRIMARY KEY ("artist_id", "category_id")
+    );
+
+    CREATE INDEX "artist_categories_cat_idx" ON "artist_categories" ("category_id");
+
+    CREATE TABLE "artist_packages" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "artist_id" uuid NOT NULL REFERENCES "artist_profiles"("id") ON DELETE cascade,
+      "title" varchar(150) NOT NULL,
+      "description" text,
+      "duration_minutes" integer NOT NULL,
+      "capacity" integer,
+      "fee_minor" integer NOT NULL,
+      "currency" varchar(10) DEFAULT 'INR' NOT NULL,
+      "is_active" boolean DEFAULT true NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+
+    CREATE INDEX "artist_packages_artist_idx" ON "artist_packages" ("artist_id");
+
+    CREATE TABLE "media_assets" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "owner_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+      "storage_key" varchar(255) NOT NULL,
+      "url" text NOT NULL,
+      "media_type" "media_type" DEFAULT 'image' NOT NULL,
+      "scan_state" "media_scan_state" DEFAULT 'clean' NOT NULL,
+      "visibility" "media_visibility" DEFAULT 'public' NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+
+    CREATE INDEX "media_assets_owner_idx" ON "media_assets" ("owner_id");
+
+    CREATE TABLE "shortlist_items" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "customer_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+      "artist_id" uuid NOT NULL REFERENCES "artist_profiles"("id") ON DELETE cascade,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+
+    CREATE UNIQUE INDEX "shortlist_cust_artist_idx" ON "shortlist_items" ("customer_id", "artist_id");
+    CREATE INDEX "shortlist_customer_idx" ON "shortlist_items" ("customer_id");
+
+    CREATE TABLE "artist_applications" (
+      "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+      "user_id" uuid NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+      "status" "application_status" DEFAULT 'pending' NOT NULL,
+      "notes" text,
+      "submitted_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "reviewed_at" timestamp with time zone,
+      "reviewed_by" uuid REFERENCES "users"("id")
+    );
+
+    CREATE INDEX "artist_applications_user_idx" ON "artist_applications" ("user_id");
   `);
 
   const pg = mem.adapters.createPg();

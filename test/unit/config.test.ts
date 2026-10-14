@@ -6,7 +6,7 @@ describe("Environment Configuration Fail-Fast Tests", () => {
     DATABASE_URL: "postgresql://ind64:password@localhost:5433/ind64_test",
     OTP_HMAC_SECRET: "ind64_super_secret_otp_hmac_key_at_least_32_chars",
     SESSION_SECRET: "ind64_super_secret_session_encryption_key_32_chars",
-    NODE_ENV: "test",
+    NODE_ENV: "test" as const,
   };
 
   it("succeeds with complete and valid environment", () => {

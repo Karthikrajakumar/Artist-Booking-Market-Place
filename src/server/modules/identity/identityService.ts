@@ -10,6 +10,7 @@ import { getSmsAdapter } from "../../providers/sms";
 import { rateLimiter } from "./rateLimit";
 import { randomUUID } from "node:crypto";
 
+
 export interface RequestOtpParams {
   phone: string;
   ip?: string;
@@ -112,6 +113,8 @@ export class IdentityService {
     }
 
     const now = new Date();
+   
+    
     if (now < existing.resendAvailableAt) {
       const waitSeconds = Math.ceil((existing.resendAvailableAt.getTime() - now.getTime()) / 1000);
       throw new AppError(

@@ -21,3 +21,10 @@ export async function parseJsonBody<T>(req: NextRequest, schema: z.ZodType<T>): 
   }
   return schema.parse(body);
 }
+
+export function parseQueryParams<T>(req: NextRequest, schema: z.ZodType<T, any, any>): T {
+  const queryObj = Object.fromEntries(req.nextUrl.searchParams.entries());
+  return schema.parse(queryObj);
+}
+
+

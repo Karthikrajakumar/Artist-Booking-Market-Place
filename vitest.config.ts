@@ -7,6 +7,9 @@ export default defineConfig({
     globals: true,
     testTimeout: 20000,
     setupFiles: ["./test/setup.ts"],
+    fileParallelism: false,
+    maxWorkers: 1,
+    minWorkers: 1,
     env: {
       NODE_ENV: "test",
       DATABASE_URL: "postgresql://ind64:ind64_secret_test_password@localhost:5433/ind64_test",

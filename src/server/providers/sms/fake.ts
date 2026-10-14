@@ -37,4 +37,10 @@ class FakeSmsAdapter implements SmsAdapter {
   }
 }
 
-export const smsAdapter = new FakeSmsAdapter();
+const globalForSms = globalThis as typeof globalThis & {
+  __fakeSmsAdapter?: FakeSmsAdapter;
+};
+
+export const smsAdapter =
+  globalForSms.__fakeSmsAdapter ??
+  (globalForSms.__fakeSmsAdapter = new FakeSmsAdapter());
